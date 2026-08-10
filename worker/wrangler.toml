@@ -1,0 +1,5 @@
+name = "snip-log-proxy"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+
+# Your ANTHROPIC_API_KEY is set as a secret, not written here — see README.
