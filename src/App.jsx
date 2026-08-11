@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Clipboard, Trash2, Check, Plus, AlertTriangle, RotateCcw, X, FilePlus2 } from "lucide-react";
+import { Clipboard, Trash2, Check, Plus, AlertTriangle, RotateCcw, X, FilePlus2, Search } from "lucide-react";
 
 // Same shape as the artifact's window.storage API, backed by localStorage.
 // This keeps data on this device/browser only. Swap this out for a real
@@ -463,6 +463,23 @@ export default function SnipNotes() {
     status === "ANALYZING" ? COLORS.amber : status === "ERROR" ? COLORS.danger : status === "PAGE" ? COLORS.green : COLORS.textMuted;
 
   const [tagDraft, setTagDraft] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const matchesSearch = (note, query) => {
+    if (!query.trim()) return true;
+    const q = query.toLowerCase();
+    const haystacks = [
+      note.title,
+      note.summary,
+      note.notes,
+      ...(note.tags || []),
+      ...(note.steps || []).flatMap((s) => [s.title, s.detail]),
+      ...(note.images || []).map((img) => img.label),
+    ];
+    return haystacks.some((h) => (h || "").toLowerCase().includes(q));
+  };
+
+  const visibleNotes = notes.filter((n) => matchesSearch(n, searchQuery));
 
   return (
     <div
@@ -915,7 +932,22 @@ export default function SnipNotes() {
         {/* Binder sidebar */}
         <div>
           <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "10px", color: COLORS.textMuted, letterSpacing: "0.1em" }} className="mb-2 px-1">
-            BINDER — {notes.length} PAGE{notes.length === 1 ? "" : "S"}
+            BINDER — {searchQuery.trim() ? `${visibleNotes.length} OF ${notes.length}` : `${notes.length} PAGE${notes.length === 1 ? "" : "S"}`}
+          </div>
+          <div
+            style={{ border: `1px solid ${COLORS.border}`, background: COLORS.panel }}
+            className="rounded-lg flex items-center gap-2 px-3 py-2 mb-2"
+          >
+            <Search size={13} color={COLORS.textMuted} />
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search titles, notes, steps, tags…"
+              style={{ ...inputBase, fontFamily: "'IBM Plex Mono', monospace", fontSize: "11px", color: COLORS.text }}
+            />
+            {searchQuery && (
+              <X size={13} color={COLORS.textMuted} className="cursor-pointer hover:text-white shrink-0" onClick={() => setSearchQuery("")} />
+            )}
           </div>
           <div style={{ border: `1px solid ${COLORS.border}`, background: COLORS.panel }} className="rounded-lg divide-y max-h-[560px] overflow-y-auto">
             {!loaded && (
@@ -928,7 +960,12 @@ export default function SnipNotes() {
                 the binder is empty
               </div>
             )}
-            {notes.map((note) => (
+            {loaded && notes.length > 0 && visibleNotes.length === 0 && (
+              <div style={{ color: COLORS.textMuted, fontSize: "12px", fontFamily: "'IBM Plex Mono', monospace" }} className="p-4">
+                no pages match "{searchQuery}"
+              </div>
+            )}
+            {visibleNotes.map((note) => (
               <div
                 key={note.id}
                 onClick={() => openNote(note)}
