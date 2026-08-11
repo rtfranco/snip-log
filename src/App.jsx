@@ -5,9 +5,6 @@ import {
   Book, Type, LayoutGrid, Settings as SettingsIcon, Download, Palette,
 } from "lucide-react";
 
-// Same shape as the artifact's window.storage API, backed by localStorage.
-// This keeps data on this device/browser only. Swap this out for a real
-// backend + database later if you want notes to sync across devices.
 const storage = {
   async get(key) {
     const value = localStorage.getItem(key);
@@ -23,8 +20,6 @@ const storage = {
   },
 };
 
-// Your API proxy URL (Cloudflare Worker). Set this in a .env file as
-// VITE_API_PROXY_URL=https://your-worker.your-subdomain.workers.dev
 const API_PROXY_URL = import.meta.env.VITE_API_PROXY_URL || "http://localhost:8787";
 
 const FONTS = `
@@ -85,15 +80,15 @@ const THEMES = {
 const FONT_STACKS = {
   technical: {
     label: "Technical",
-    display: F.display,
-    sans: F.sans,
-    mono: F.mono,
+    display: "'Archivo Black', sans-serif",
+    sans: "'IBM Plex Sans', sans-serif",
+    mono: "'IBM Plex Mono', monospace",
   },
   classic: {
     label: "Classic",
     display: "'Playfair Display', serif",
     sans: "'Source Serif 4', Georgia, serif",
-    mono: F.mono,
+    mono: "'IBM Plex Mono', monospace",
   },
   minimal: {
     label: "Minimal",
