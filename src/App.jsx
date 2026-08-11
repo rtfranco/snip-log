@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Clipboard, Trash2, Check, Plus, AlertTriangle, RotateCcw, X, FilePlus2, Search } from "lucide-react";
+import { Clipboard, Trash2, Check, Plus, AlertTriangle, RotateCcw, X, FilePlus2, Search, ChevronDown, Pencil, Square, ArrowUpRight, Eraser, Save, Book } from "lucide-react";
 
 // Same shape as the artifact's window.storage API, backed by localStorage.
 // This keeps data on this device/browser only. Swap this out for a real
@@ -51,14 +51,52 @@ const inputBase = {
   resize: "none",
 };
 
-function blankNote() {
+const DEFAULT_NOTEBOOK = "General";
+
+const TEMPLATES = {
+  blank: { label: "Blank Page", steps: [] },
+  troubleshooting: {
+    label: "Troubleshooting",
+    steps: [
+      "Document the symptom and when it started",
+      "Identify what changed recently",
+      "Isolate the root cause",
+      "Apply the fix",
+      "Verify and document resolution",
+    ],
+  },
+  procedure: {
+    label: "Procedure / SOP",
+    steps: [
+      "Purpose and scope",
+      "Prerequisites",
+      "Step-by-step actions",
+      "Verification",
+      "Rollback plan",
+    ],
+  },
+  security: {
+    label: "Security Finding",
+    steps: [
+      "Finding description",
+      "Affected asset(s)",
+      "Risk / impact",
+      "Remediation steps",
+      "Verification",
+    ],
+  },
+};
+
+function blankNote(templateKey = "blank") {
+  const template = TEMPLATES[templateKey] || TEMPLATES.blank;
   return {
     id: String(Date.now()) + Math.random().toString(36).slice(2, 6),
     title: "Untitled page",
     summary: "",
     notes: "",
     tags: [],
-    steps: [],
+    notebook: DEFAULT_NOTEBOOK,
+    steps: template.steps.map((title) => ({ title, detail: "", done: false })),
     images: [],
     createdAt: new Date().toISOString(),
   };
@@ -180,6 +218,7 @@ export default function SnipNotes() {
       summary: "",
       notes: "",
       tags: [],
+      notebook: DEFAULT_NOTEBOOK,
       steps: [],
       images: thumbDataUrl ? [{ id: imageId, label: "Snip 1" }] : [],
       createdAt: new Date().toISOString(),
@@ -239,6 +278,7 @@ export default function SnipNotes() {
         summary: parsed.summary || "",
         notes: "",
         tags: Array.isArray(parsed.tags) ? parsed.tags : [],
+        notebook: DEFAULT_NOTEBOOK,
         steps: Array.isArray(parsed.steps)
           ? parsed.steps.map((s) => ({ title: s.title || "", detail: s.detail || "", done: false }))
           : [],
@@ -448,15 +488,21 @@ export default function SnipNotes() {
     }
   };
 
-  const newBlankPage = async () => {
-    const note = blankNote();
+  const newPageFromTemplate = async (templateKey) => {
+    const note = blankNote(templateKey);
     const next = [note, ...notes];
     setCurrent(note);
     setStatus("PAGE");
     setPreview(null);
     setCurrentImages([]);
     setErrorMsg("");
+    setTemplateMenuOpen(false);
     await persistNotes(next);
+  };
+
+  const setNotebook = (name) => {
+    if (!current) return;
+    updateCurrent({ notebook: name || DEFAULT_NOTEBOOK });
   };
 
   const statusColor =
@@ -464,6 +510,19 @@ export default function SnipNotes() {
 
   const [tagDraft, setTagDraft] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
+  const [notebookFilter, setNotebookFilter] = useState("All");
+  const [notebookDraft, setNotebookDraft] = useState("");
+
+  // Annotation (drawing on top of a snip in the lightbox)
+  const [annotating, setAnnotating] = useState(false);
+  const [annotateTool, setAnnotateTool] = useState("pen"); // pen | rect | arrow
+  const [annotateColor, setAnnotateColor] = useState(COLORS.danger);
+  const baseCanvasRef = useRef(null);
+  const overlayCanvasRef = useRef(null);
+  const drawingRef = useRef(false);
+  const startPosRef = useRef({ x: 0, y: 0 });
+  const lastPosRef = useRef({ x: 0, y: 0 });
 
   const matchesSearch = (note, query) => {
     if (!query.trim()) return true;
@@ -479,7 +538,158 @@ export default function SnipNotes() {
     return haystacks.some((h) => (h || "").toLowerCase().includes(q));
   };
 
-  const visibleNotes = notes.filter((n) => matchesSearch(n, searchQuery));
+  const notebooks = Array.from(new Set([DEFAULT_NOTEBOOK, ...notes.map((n) => n.notebook || DEFAULT_NOTEBOOK)]));
+
+  const visibleNotes = notes.filter(
+    (n) => (notebookFilter === "All" || (n.notebook || DEFAULT_NOTEBOOK) === notebookFilter) && matchesSearch(n, searchQuery)
+  );
+
+  // ---- image annotation helpers ----
+  const getCanvasPoint = (e, canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+  };
+
+  const drawArrow = (ctx, x1, y1, x2, y2, color) => {
+    const headLen = 14;
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - headLen * Math.cos(angle - Math.PI / 6), y2 - headLen * Math.sin(angle - Math.PI / 6));
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - headLen * Math.cos(angle + Math.PI / 6), y2 - headLen * Math.sin(angle + Math.PI / 6));
+    ctx.stroke();
+  };
+
+  const startAnnotating = () => {
+    if (!lightboxSrc) return;
+    setAnnotating(true);
+    setTimeout(() => {
+      const base = baseCanvasRef.current;
+      const overlay = overlayCanvasRef.current;
+      if (!base || !overlay) return;
+      const img = new Image();
+      img.onload = () => {
+        base.width = img.width;
+        base.height = img.height;
+        overlay.width = img.width;
+        overlay.height = img.height;
+        base.getContext("2d").drawImage(img, 0, 0);
+      };
+      img.src = lightboxSrc;
+    }, 0);
+  };
+
+  const clearAnnotations = () => {
+    const base = baseCanvasRef.current;
+    if (!base || !lightboxSrc) return;
+    const img = new Image();
+    img.onload = () => {
+      base.getContext("2d").clearRect(0, 0, base.width, base.height);
+      base.getContext("2d").drawImage(img, 0, 0);
+    };
+    img.src = lightboxSrc;
+  };
+
+  const handleAnnotatePointerDown = (e) => {
+    const overlay = overlayCanvasRef.current;
+    const base = baseCanvasRef.current;
+    if (!overlay || !base) return;
+    drawingRef.current = true;
+    const pt = getCanvasPoint(e, overlay);
+    startPosRef.current = pt;
+    lastPosRef.current = pt;
+    if (annotateTool === "pen") {
+      const ctx = base.getContext("2d");
+      ctx.fillStyle = annotateColor;
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  };
+
+  const handleAnnotatePointerMove = (e) => {
+    if (!drawingRef.current) return;
+    const overlay = overlayCanvasRef.current;
+    const base = baseCanvasRef.current;
+    if (!overlay || !base) return;
+    const pt = getCanvasPoint(e, overlay);
+    if (annotateTool === "pen") {
+      const ctx = base.getContext("2d");
+      ctx.strokeStyle = annotateColor;
+      ctx.lineWidth = 3;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(lastPosRef.current.x, lastPosRef.current.y);
+      ctx.lineTo(pt.x, pt.y);
+      ctx.stroke();
+      lastPosRef.current = pt;
+    } else {
+      const octx = overlay.getContext("2d");
+      octx.clearRect(0, 0, overlay.width, overlay.height);
+      if (annotateTool === "rect") {
+        octx.strokeStyle = annotateColor;
+        octx.lineWidth = 3;
+        octx.strokeRect(
+          startPosRef.current.x,
+          startPosRef.current.y,
+          pt.x - startPosRef.current.x,
+          pt.y - startPosRef.current.y
+        );
+      } else if (annotateTool === "arrow") {
+        drawArrow(octx, startPosRef.current.x, startPosRef.current.y, pt.x, pt.y, annotateColor);
+      }
+      lastPosRef.current = pt;
+    }
+  };
+
+  const handleAnnotatePointerUp = () => {
+    if (!drawingRef.current) return;
+    drawingRef.current = false;
+    const overlay = overlayCanvasRef.current;
+    const base = baseCanvasRef.current;
+    if (!overlay || !base) return;
+    if (annotateTool !== "pen") {
+      const ctx = base.getContext("2d");
+      if (annotateTool === "rect") {
+        ctx.strokeStyle = annotateColor;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(
+          startPosRef.current.x,
+          startPosRef.current.y,
+          lastPosRef.current.x - startPosRef.current.x,
+          lastPosRef.current.y - startPosRef.current.y
+        );
+      } else if (annotateTool === "arrow") {
+        drawArrow(ctx, startPosRef.current.x, startPosRef.current.y, lastPosRef.current.x, lastPosRef.current.y, annotateColor);
+      }
+      overlay.getContext("2d").clearRect(0, 0, overlay.width, overlay.height);
+    }
+  };
+
+  const saveAnnotatedImage = async () => {
+    if (!current || !baseCanvasRef.current) return;
+    const dataUrl = baseCanvasRef.current.toDataURL("image/jpeg", 0.9);
+    const thumb = await resizeToJpeg(dataUrl, 260, 0.75);
+    const imageId = newImageId();
+    const existing = current.images || [];
+    const label = "Annotated";
+    const images = [...existing, { id: imageId, label }];
+    updateCurrent({ images });
+    setCurrentImages((prev) => [...prev, { id: imageId, label, thumb }]);
+    await saveImageAssets(imageId, thumb, dataUrl);
+    setAnnotating(false);
+    closeLightbox();
+  };
 
   return (
     <div
@@ -509,19 +719,52 @@ export default function SnipNotes() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={newBlankPage}
-            style={{
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: "12px",
-              color: COLORS.amber,
-              border: `1px solid ${COLORS.amberDim}`,
-              background: COLORS.panel,
-            }}
-            className="px-3 py-1.5 rounded flex items-center gap-2 hover:bg-white/5"
-          >
-            <FilePlus2 size={13} /> NEW PAGE
-          </button>
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setTemplateMenuOpen((v) => !v)}
+              style={{
+                fontFamily: "'IBM Plex Mono', monospace",
+                fontSize: "12px",
+                color: COLORS.amber,
+                border: `1px solid ${COLORS.amberDim}`,
+                background: COLORS.panel,
+              }}
+              className="px-3 py-1.5 rounded flex items-center gap-2 hover:bg-white/5"
+            >
+              <FilePlus2 size={13} /> NEW PAGE <ChevronDown size={12} />
+            </button>
+            {templateMenuOpen && (
+              <>
+                <div style={{ position: "fixed", inset: 0, zIndex: 30 }} onClick={() => setTemplateMenuOpen(false)} />
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 6px)",
+                    left: 0,
+                    background: COLORS.panel,
+                    border: `1px solid ${COLORS.border}`,
+                    zIndex: 31,
+                    minWidth: 200,
+                  }}
+                  className="rounded-lg overflow-hidden shadow-lg"
+                >
+                  {Object.entries(TEMPLATES).map(([key, t]) => (
+                    <button
+                      key={key}
+                      onClick={() => newPageFromTemplate(key)}
+                      style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "12px", color: COLORS.text, borderBottom: `1px solid ${COLORS.border}` }}
+                      className="w-full text-left px-3 py-2.5 hover:bg-white/5 flex flex-col gap-0.5"
+                    >
+                      <span>{t.label}</span>
+                      {t.steps.length > 0 && (
+                        <span style={{ color: COLORS.textMuted, fontSize: "10px" }}>{t.steps.length} preset steps</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
           <div
             style={{
               fontFamily: "'IBM Plex Mono', monospace",
@@ -646,6 +889,29 @@ export default function SnipNotes() {
                     }}
                     placeholder="Page title"
                   />
+                  <div className="flex items-center gap-1.5 mt-2">
+                    <Book size={11} color={COLORS.textMuted} />
+                    <input
+                      list="notebook-options"
+                      value={current.notebook || DEFAULT_NOTEBOOK}
+                      onChange={(e) => setNotebook(e.target.value)}
+                      onBlur={commitCurrent}
+                      style={{
+                        ...inputBase,
+                        width: "auto",
+                        minWidth: 60,
+                        fontFamily: "'IBM Plex Mono', monospace",
+                        fontSize: "11px",
+                        color: COLORS.textMuted,
+                      }}
+                      placeholder={DEFAULT_NOTEBOOK}
+                    />
+                    <datalist id="notebook-options">
+                      {notebooks.map((nb) => (
+                        <option key={nb} value={nb} />
+                      ))}
+                    </datalist>
+                  </div>
                 </div>
                 <button
                   onClick={reset}
@@ -934,6 +1200,24 @@ export default function SnipNotes() {
           <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "10px", color: COLORS.textMuted, letterSpacing: "0.1em" }} className="mb-2 px-1">
             BINDER — {searchQuery.trim() ? `${visibleNotes.length} OF ${notes.length}` : `${notes.length} PAGE${notes.length === 1 ? "" : "S"}`}
           </div>
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {["All", ...notebooks].map((nb) => (
+              <button
+                key={nb}
+                onClick={() => setNotebookFilter(nb)}
+                style={{
+                  fontFamily: "'IBM Plex Mono', monospace",
+                  fontSize: "10px",
+                  color: notebookFilter === nb ? COLORS.bg : COLORS.textMuted,
+                  background: notebookFilter === nb ? COLORS.amber : "transparent",
+                  border: `1px solid ${notebookFilter === nb ? COLORS.amber : COLORS.border}`,
+                }}
+                className="px-2 py-1 rounded"
+              >
+                {nb}
+              </button>
+            ))}
+          </div>
           <div
             style={{ border: `1px solid ${COLORS.border}`, background: COLORS.panel }}
             className="rounded-lg flex items-center gap-2 px-3 py-2 mb-2"
@@ -984,7 +1268,7 @@ export default function SnipNotes() {
                       {note.title || "Untitled page"}
                     </div>
                     <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "10px", color: COLORS.textMuted }} className="mt-1">
-                      {new Date(note.createdAt).toLocaleDateString()} · {note.steps?.filter((s) => s.done).length || 0}/{note.steps?.length || 0} done
+                      {note.notebook || DEFAULT_NOTEBOOK} · {new Date(note.createdAt).toLocaleDateString()} · {note.steps?.filter((s) => s.done).length || 0}/{note.steps?.length || 0} done
                     </div>
                   </div>
                 </div>
@@ -1003,21 +1287,25 @@ export default function SnipNotes() {
 
       {lightboxOpen && (
         <div
-          onClick={closeLightbox}
+          onClick={annotating ? undefined : closeLightbox}
           style={{
             position: "fixed",
             inset: 0,
             background: "rgba(10,12,14,0.88)",
             zIndex: 50,
             display: "flex",
+            flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
             padding: "24px",
-            cursor: "zoom-out",
+            cursor: annotating ? "default" : "zoom-out",
           }}
         >
           <button
-            onClick={closeLightbox}
+            onClick={() => {
+              if (annotating) setAnnotating(false);
+              else closeLightbox();
+            }}
             style={{
               position: "absolute",
               top: 20,
@@ -1030,12 +1318,36 @@ export default function SnipNotes() {
           >
             <X size={16} />
           </button>
+
+          {!annotating && lightboxSrc && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                startAnnotating();
+              }}
+              style={{
+                position: "absolute",
+                top: 20,
+                right: 68,
+                fontFamily: "'IBM Plex Mono', monospace",
+                fontSize: "12px",
+                color: COLORS.amber,
+                border: `1px solid ${COLORS.amberDim}`,
+                background: COLORS.panel,
+              }}
+              className="px-3 py-2 rounded flex items-center gap-1.5 hover:bg-white/5"
+            >
+              <Pencil size={13} /> ANNOTATE
+            </button>
+          )}
+
           {lightboxLoading && !lightboxSrc && (
             <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "12px", color: COLORS.textMuted }}>
               loading full snip…
             </div>
           )}
-          {lightboxSrc && (
+
+          {lightboxSrc && !annotating && (
             <img
               src={lightboxSrc}
               alt="full snip"
@@ -1049,6 +1361,92 @@ export default function SnipNotes() {
                 cursor: "default",
               }}
             />
+          )}
+
+          {annotating && (
+            <div onClick={(e) => e.stopPropagation()} className="flex flex-col items-center gap-3">
+              <div style={{ position: "relative", maxWidth: "85vw", maxHeight: "72vh" }}>
+                <canvas
+                  ref={baseCanvasRef}
+                  style={{ maxWidth: "85vw", maxHeight: "72vh", display: "block", borderRadius: 6, border: `1px solid ${COLORS.border}` }}
+                />
+                <canvas
+                  ref={overlayCanvasRef}
+                  onPointerDown={handleAnnotatePointerDown}
+                  onPointerMove={handleAnnotatePointerMove}
+                  onPointerUp={handleAnnotatePointerUp}
+                  onPointerLeave={handleAnnotatePointerUp}
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    width: "100%",
+                    height: "100%",
+                    cursor: "crosshair",
+                    touchAction: "none",
+                  }}
+                />
+              </div>
+              <div
+                style={{ border: `1px solid ${COLORS.border}`, background: COLORS.panel }}
+                className="rounded-lg flex items-center gap-1.5 px-2 py-2"
+              >
+                {[
+                  { key: "pen", icon: Pencil, label: "Pen" },
+                  { key: "rect", icon: Square, label: "Box" },
+                  { key: "arrow", icon: ArrowUpRight, label: "Arrow" },
+                ].map(({ key, icon: Icon, label }) => (
+                  <button
+                    key={key}
+                    onClick={() => setAnnotateTool(key)}
+                    title={label}
+                    style={{
+                      color: annotateTool === key ? COLORS.bg : COLORS.textMuted,
+                      background: annotateTool === key ? COLORS.amber : "transparent",
+                      border: `1px solid ${annotateTool === key ? COLORS.amber : COLORS.border}`,
+                    }}
+                    className="p-2 rounded"
+                  >
+                    <Icon size={14} />
+                  </button>
+                ))}
+                <div style={{ width: 1, alignSelf: "stretch", background: COLORS.border }} className="mx-1" />
+                {[COLORS.danger, COLORS.amber].map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setAnnotateColor(c)}
+                    title="Color"
+                    style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: "50%",
+                      background: c,
+                      border: annotateColor === c ? `2px solid ${COLORS.text}` : `1px solid ${COLORS.border}`,
+                    }}
+                  />
+                ))}
+                <div style={{ width: 1, alignSelf: "stretch", background: COLORS.border }} className="mx-1" />
+                <button
+                  onClick={clearAnnotations}
+                  title="Clear"
+                  style={{ color: COLORS.textMuted, border: `1px solid ${COLORS.border}` }}
+                  className="p-2 rounded hover:text-white hover:border-white/30"
+                >
+                  <Eraser size={14} />
+                </button>
+                <button
+                  onClick={saveAnnotatedImage}
+                  style={{
+                    fontFamily: "'IBM Plex Mono', monospace",
+                    fontSize: "11px",
+                    color: COLORS.bg,
+                    background: COLORS.green,
+                  }}
+                  className="px-3 py-2 rounded flex items-center gap-1.5 ml-1"
+                >
+                  <Save size={13} /> SAVE AS NEW SNIP
+                </button>
+              </div>
+            </div>
           )}
         </div>
       )}
