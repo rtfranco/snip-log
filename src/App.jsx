@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Clipboard, Trash2, Check, Plus, AlertTriangle, RotateCcw, X, FilePlus2, Search,
   ChevronDown, ChevronLeft, ChevronRight, Pencil, Square, ArrowUpRight, Eraser, Save,
-  Book, Type, LayoutGrid,
+  Book, Type, LayoutGrid, Settings as SettingsIcon, Download, Palette,
 } from "lucide-react";
 
 // Same shape as the artifact's window.storage API, backed by localStorage.
@@ -28,41 +28,84 @@ const storage = {
 const API_PROXY_URL = import.meta.env.VITE_API_PROXY_URL || "http://localhost:8787";
 
 const FONTS = `
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Archivo+Black&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Archivo+Black&family=Source+Serif+4:wght@400;600;700&family=Playfair+Display:wght@700;800&display=swap');
 `;
 
-const COLORS = {
-  bg: "#1E2228",
-  panel: "#242830",
-  panelAlt: "#2A2F38",
-  grid: "#333941",
-  border: "#3A4048",
-  amber: "#ECEDEF",
-  amberDim: "#4A505A",
-  green: "#9FB8A6",
-  blue: "#7EB6FF",
-  ink: "#12151A",
-  text: "#ECEDEF",
-  textMuted: "#868D96",
-  danger: "#D97B6C",
+const THEMES = {
+  slate: {
+    label: "Slate",
+    bg: "#1E2228",
+    panel: "#242830",
+    panelAlt: "#2A2F38",
+    grid: "#333941",
+    border: "#3A4048",
+    amber: "#ECEDEF",
+    amberDim: "#4A505A",
+    green: "#9FB8A6",
+    blue: "#7EB6FF",
+    ink: "#12151A",
+    text: "#ECEDEF",
+    textMuted: "#868D96",
+    danger: "#D97B6C",
+  },
+  crt: {
+    label: "Amber CRT",
+    bg: "#0B0D08",
+    panel: "#14170F",
+    panelAlt: "#1A1E13",
+    grid: "#2A2F1C",
+    border: "#3A3F26",
+    amber: "#FFB000",
+    amberDim: "#8C6218",
+    green: "#7CFF9E",
+    blue: "#7EB6FF",
+    ink: "#050600",
+    text: "#FFD27A",
+    textMuted: "#8C8358",
+    danger: "#FF6B4A",
+  },
+  paper: {
+    label: "Paper",
+    bg: "#F4F1E8",
+    panel: "#FBFAF4",
+    panelAlt: "#EFEBDD",
+    grid: "#E3DEC9",
+    border: "#D8D2BA",
+    amber: "#1F2937",
+    amberDim: "#8A8365",
+    green: "#3F7355",
+    blue: "#2F5FA8",
+    ink: "#1A1A1A",
+    text: "#1F2320",
+    textMuted: "#75705C",
+    danger: "#B0432E",
+  },
 };
 
-const inputBase = {
-  background: "transparent",
-  border: "none",
-  outline: "none",
-  color: COLORS.text,
-  fontFamily: "'IBM Plex Sans', sans-serif",
-  width: "100%",
-  resize: "none",
+const FONT_STACKS = {
+  technical: {
+    label: "Technical",
+    display: F.display,
+    sans: F.sans,
+    mono: F.mono,
+  },
+  classic: {
+    label: "Classic",
+    display: "'Playfair Display', serif",
+    sans: "'Source Serif 4', Georgia, serif",
+    mono: F.mono,
+  },
+  minimal: {
+    label: "Minimal",
+    display: "-apple-system, system-ui, sans-serif",
+    sans: "-apple-system, system-ui, sans-serif",
+    mono: "ui-monospace, 'SF Mono', monospace",
+  },
 };
 
-const monoLabel = {
-  fontFamily: "'IBM Plex Mono', monospace",
-  fontSize: "10px",
-  color: COLORS.textMuted,
-  letterSpacing: "0.1em",
-};
+const FONT_SCALES = { sm: 0.9, md: 1, lg: 1.15 };
+
+
 
 const DEFAULT_NOTEBOOK = "General";
 
@@ -169,6 +212,35 @@ export default function SnipNotes() {
   const [lightboxLoading, setLightboxLoading] = useState(false);
   const fullImageCache = useRef({});
 
+  const [themeKey, setThemeKey] = useState("slate");
+  const [fontKey, setFontKey] = useState("technical");
+  const [fontScale, setFontScale] = useState("md");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [exportStatus, setExportStatus] = useState("idle"); // idle | working | done
+  const [extraNotebooks, setExtraNotebooks] = useState([]);
+  const [newNotebookOpen, setNewNotebookOpen] = useState(false);
+  const [newNotebookDraft, setNewNotebookDraft] = useState("");
+
+  const T = THEMES[themeKey] || THEMES.slate;
+  const F = FONT_STACKS[fontKey] || FONT_STACKS.technical;
+
+  const inputBase = {
+    background: "transparent",
+    border: "none",
+    outline: "none",
+    color: T.text,
+    fontFamily: F.sans,
+    width: "100%",
+    resize: "none",
+  };
+
+  const monoLabel = {
+    fontFamily: F.mono,
+    fontSize: "10px",
+    color: T.textMuted,
+    letterSpacing: "0.1em",
+  };
+
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -177,12 +249,92 @@ export default function SnipNotes() {
         if (mounted && result?.value) setNotes(JSON.parse(result.value));
       } catch (e) {
         // no notes yet
+      }
+      try {
+        const settingsResult = await storage.get("snipnotes:settings");
+        if (mounted && settingsResult?.value) {
+          const s = JSON.parse(settingsResult.value);
+          if (s.themeKey) setThemeKey(s.themeKey);
+          if (s.fontKey) setFontKey(s.fontKey);
+          if (s.fontScale) setFontScale(s.fontScale);
+        }
+      } catch (e) {
+        // defaults are fine
+      }
+      try {
+        const nbResult = await storage.get("snipnotes:notebooks");
+        if (mounted && nbResult?.value) setExtraNotebooks(JSON.parse(nbResult.value));
+      } catch (e) {
+        // none created yet
       } finally {
         if (mounted) setLoaded(true);
       }
     })();
     return () => { mounted = false; };
   }, []);
+
+  const saveSettings = useCallback(async (patch) => {
+    const next = {
+      themeKey: patch.themeKey ?? themeKey,
+      fontKey: patch.fontKey ?? fontKey,
+      fontScale: patch.fontScale ?? fontScale,
+    };
+    if (patch.themeKey) setThemeKey(patch.themeKey);
+    if (patch.fontKey) setFontKey(patch.fontKey);
+    if (patch.fontScale) setFontScale(patch.fontScale);
+    try {
+      await storage.set("snipnotes:settings", JSON.stringify(next));
+    } catch (e) {
+      // best-effort
+    }
+  }, [themeKey, fontKey, fontScale]);
+
+  const addNotebook = async (name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const next = Array.from(new Set([...extraNotebooks, trimmed]));
+    setExtraNotebooks(next);
+    try {
+      await storage.set("snipnotes:notebooks", JSON.stringify(next));
+    } catch (e) {
+      // best-effort
+    }
+    setNotebookFilter(trimmed);
+    setNewNotebookDraft("");
+    setNewNotebookOpen(false);
+  };
+
+  const exportAllData = async () => {
+    setExportStatus("working");
+    try {
+      const imageMap = {};
+      for (const note of notes) {
+        for (const img of note.images || []) {
+          try {
+            const thumbRes = await storage.get(`snipnotes:img:${img.id}`);
+            const fullRes = await storage.get(`snipnotes:imgfull:${img.id}`);
+            imageMap[img.id] = { thumb: thumbRes?.value || null, full: fullRes?.value || null };
+          } catch (e) {
+            // skip missing images
+          }
+        }
+      }
+      const payload = { exportedAt: new Date().toISOString(), app: "FIELDNOTE", notes, images: imageMap };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `fieldnote-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setExportStatus("done");
+      setTimeout(() => setExportStatus("idle"), 2000);
+    } catch (e) {
+      setExportStatus("idle");
+    }
+  };
 
   const persistNotes = useCallback(async (next) => {
     setNotes(next);
@@ -513,7 +665,7 @@ export default function SnipNotes() {
   };
 
   const statusColor =
-    status === "ANALYZING" ? COLORS.amber : status === "ERROR" ? COLORS.danger : status === "PAGE" ? COLORS.green : COLORS.textMuted;
+    status === "ANALYZING" ? T.amber : status === "ERROR" ? T.danger : status === "PAGE" ? T.green : T.textMuted;
 
   const [tagDraft, setTagDraft] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -526,7 +678,7 @@ export default function SnipNotes() {
   // Annotation (drawing on top of a snip in the lightbox)
   const [annotating, setAnnotating] = useState(false);
   const [annotateTool, setAnnotateTool] = useState("pen"); // pen | rect | arrow | text
-  const [annotateColor, setAnnotateColor] = useState(COLORS.danger);
+  const [annotateColor, setAnnotateColor] = useState(T.danger);
   const [textInputPos, setTextInputPos] = useState(null); // { canvasX, canvasY, cssLeft, cssTop }
   const [textInputValue, setTextInputValue] = useState("");
   const baseCanvasRef = useRef(null);
@@ -550,7 +702,7 @@ export default function SnipNotes() {
     return haystacks.some((h) => (h || "").toLowerCase().includes(q));
   };
 
-  const notebooks = Array.from(new Set([DEFAULT_NOTEBOOK, ...notes.map((n) => n.notebook || DEFAULT_NOTEBOOK)]));
+  const notebooks = Array.from(new Set([DEFAULT_NOTEBOOK, ...extraNotebooks, ...notes.map((n) => n.notebook || DEFAULT_NOTEBOOK)]));
 
   const visibleNotes = notes.filter(
     (n) =>
@@ -738,33 +890,34 @@ export default function SnipNotes() {
     closeLightbox();
   };
 
-  const ANNOTATE_COLORS = [COLORS.danger, COLORS.amber, COLORS.green, COLORS.blue, COLORS.ink];
+  const ANNOTATE_COLORS = [T.danger, T.amber, T.green, T.blue, T.ink];
 
   return (
     <div
       style={{
         height: "100vh",
-        background: COLORS.bg,
-        color: COLORS.text,
-        fontFamily: "'IBM Plex Sans', sans-serif",
+        background: T.bg,
+        color: T.text,
+        fontFamily: F.sans,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
+        zoom: FONT_SCALES[fontScale] || 1,
       }}
     >
       <style>{FONTS}</style>
 
       {/* TOP BAR */}
       <div
-        style={{ borderBottom: `1px solid ${COLORS.border}`, background: COLORS.panel, flexShrink: 0 }}
+        style={{ borderBottom: `1px solid ${T.border}`, background: T.panel, flexShrink: 0 }}
         className="flex items-center justify-between px-4 py-2 gap-4"
       >
-        <div style={{ fontFamily: "'Archivo Black', sans-serif", fontSize: "15px", letterSpacing: "0.02em" }} className="shrink-0">
-          SNIP<span style={{ color: COLORS.amber }}>/</span>LOG
+        <div style={{ fontFamily: F.display, fontSize: "15px", letterSpacing: "0.02em" }} className="shrink-0">
+          FIELD<span style={{ color: T.amber }}>NOTE</span>
         </div>
 
         <div className="flex items-center gap-1">
-          <button onClick={() => setWeekOffset((o) => o - 1)} style={{ color: COLORS.textMuted }} className="p-1.5 rounded hover:bg-white/5">
+          <button onClick={() => setWeekOffset((o) => o - 1)} style={{ color: T.textMuted }} className="p-1.5 rounded hover:bg-white/5">
             <ChevronLeft size={14} />
           </button>
           {weekDays.map((d, i) => {
@@ -776,11 +929,11 @@ export default function SnipNotes() {
                 key={i}
                 onClick={() => setDayFilter((prev) => (prev && sameDay(prev, d) ? null : d))}
                 style={{
-                  fontFamily: "'IBM Plex Mono', monospace",
+                  fontFamily: F.mono,
                   width: 38,
-                  background: isSelected ? COLORS.amber : "transparent",
-                  color: isSelected ? COLORS.bg : isToday ? COLORS.text : COLORS.textMuted,
-                  border: isToday && !isSelected ? `1px solid ${COLORS.amberDim}` : "1px solid transparent",
+                  background: isSelected ? T.amber : "transparent",
+                  color: isSelected ? T.bg : isToday ? T.text : T.textMuted,
+                  border: isToday && !isSelected ? `1px solid ${T.amberDim}` : "1px solid transparent",
                 }}
                 className="rounded flex flex-col items-center py-1 hover:bg-white/5 relative"
               >
@@ -794,14 +947,14 @@ export default function SnipNotes() {
                       width: 3,
                       height: 3,
                       borderRadius: "50%",
-                      background: isSelected ? COLORS.bg : COLORS.green,
+                      background: isSelected ? T.bg : T.green,
                     }}
                   />
                 )}
               </button>
             );
           })}
-          <button onClick={() => setWeekOffset((o) => o + 1)} style={{ color: COLORS.textMuted }} className="p-1.5 rounded hover:bg-white/5">
+          <button onClick={() => setWeekOffset((o) => o + 1)} style={{ color: T.textMuted }} className="p-1.5 rounded hover:bg-white/5">
             <ChevronRight size={14} />
           </button>
           <button
@@ -809,47 +962,57 @@ export default function SnipNotes() {
               setWeekOffset(0);
               setDayFilter(null);
             }}
-            style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "11px", color: COLORS.textMuted, border: `1px solid ${COLORS.border}` }}
+            style={{ fontFamily: F.mono, fontSize: "11px", color: T.textMuted, border: `1px solid ${T.border}` }}
             className="ml-2 px-2.5 py-1.5 rounded hover:text-white hover:border-white/30"
           >
             Today
           </button>
         </div>
 
-        <div
-          style={{
-            fontFamily: "'IBM Plex Mono', monospace",
-            fontSize: "11px",
-            color: statusColor,
-            border: `1px solid ${COLORS.border}`,
-          }}
-          className="px-2.5 py-1.5 rounded flex items-center gap-2 shrink-0"
-        >
-          <span
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setSettingsOpen(true)}
+            style={{ color: T.textMuted, border: `1px solid ${T.border}` }}
+            className="p-1.5 rounded hover:text-white hover:border-white/30"
+            title="Settings"
+          >
+            <SettingsIcon size={15} />
+          </button>
+          <div
             style={{
-              width: 6,
-              height: 6,
-              borderRadius: "50%",
-              background: statusColor,
-              boxShadow: status === "ANALYZING" ? `0 0 8px ${statusColor}` : "none",
+              fontFamily: F.mono,
+              fontSize: "11px",
+              color: statusColor,
+              border: `1px solid ${T.border}`,
             }}
-          />
-          {status}
+            className="px-2.5 py-1.5 rounded flex items-center gap-2"
+          >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: statusColor,
+                boxShadow: status === "ANALYZING" ? `0 0 8px ${statusColor}` : "none",
+              }}
+            />
+            {status}
+          </div>
         </div>
       </div>
 
       <div className="flex flex-1 min-h-0">
         {/* LEFT RAIL */}
-        <div style={{ width: 210, borderRight: `1px solid ${COLORS.border}`, background: COLORS.panel, flexShrink: 0 }} className="flex flex-col p-3 overflow-y-auto">
+        <div style={{ width: 210, borderRight: `1px solid ${T.border}`, background: T.panel, flexShrink: 0 }} className="flex flex-col p-3 overflow-y-auto">
           <div style={{ position: "relative" }} className="mb-3">
             <button
               onClick={() => setTemplateMenuOpen((v) => !v)}
               style={{
-                fontFamily: "'IBM Plex Mono', monospace",
+                fontFamily: F.mono,
                 fontSize: "12px",
-                color: COLORS.amber,
-                border: `1px solid ${COLORS.amberDim}`,
-                background: COLORS.panelAlt,
+                color: T.amber,
+                border: `1px solid ${T.amberDim}`,
+                background: T.panelAlt,
               }}
               className="w-full px-3 py-2 rounded flex items-center justify-center gap-2 hover:bg-white/5"
             >
@@ -859,18 +1022,18 @@ export default function SnipNotes() {
               <>
                 <div style={{ position: "fixed", inset: 0, zIndex: 30 }} onClick={() => setTemplateMenuOpen(false)} />
                 <div
-                  style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: COLORS.panelAlt, border: `1px solid ${COLORS.border}`, zIndex: 31 }}
+                  style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: T.panelAlt, border: `1px solid ${T.border}`, zIndex: 31 }}
                   className="rounded-lg overflow-hidden shadow-lg"
                 >
                   {Object.entries(TEMPLATES).map(([key, t]) => (
                     <button
                       key={key}
                       onClick={() => newPageFromTemplate(key)}
-                      style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "11.5px", color: COLORS.text, borderBottom: `1px solid ${COLORS.border}` }}
+                      style={{ fontFamily: F.mono, fontSize: "11.5px", color: T.text, borderBottom: `1px solid ${T.border}` }}
                       className="w-full text-left px-3 py-2.5 hover:bg-white/5 flex flex-col gap-0.5"
                     >
                       <span>{t.label}</span>
-                      {t.steps.length > 0 && <span style={{ color: COLORS.textMuted, fontSize: "10px" }}>{t.steps.length} preset steps</span>}
+                      {t.steps.length > 0 && <span style={{ color: T.textMuted, fontSize: "10px" }}>{t.steps.length} preset steps</span>}
                     </button>
                   ))}
                 </div>
@@ -878,26 +1041,43 @@ export default function SnipNotes() {
             )}
           </div>
 
-          <div style={{ border: `1px solid ${COLORS.border}`, background: COLORS.panelAlt }} className="rounded-lg flex items-center gap-2 px-2.5 py-2 mb-3">
-            <Search size={12} color={COLORS.textMuted} className="shrink-0" />
+          <div style={{ border: `1px solid ${T.border}`, background: T.panelAlt }} className="rounded-lg flex items-center gap-2 px-2.5 py-2 mb-3">
+            <Search size={12} color={T.textMuted} className="shrink-0" />
             <input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search…"
-              style={{ ...inputBase, fontFamily: "'IBM Plex Mono', monospace", fontSize: "11px", color: COLORS.text }}
+              style={{ ...inputBase, fontFamily: F.mono, fontSize: "11px", color: T.text }}
             />
-            {searchQuery && <X size={12} color={COLORS.textMuted} className="cursor-pointer hover:text-white shrink-0" onClick={() => setSearchQuery("")} />}
+            {searchQuery && <X size={12} color={T.textMuted} className="cursor-pointer hover:text-white shrink-0" onClick={() => setSearchQuery("")} />}
           </div>
 
-          <div style={monoLabel} className="mb-1.5 px-1">NOTEBOOKS</div>
+          <div className="flex items-center justify-between mb-1.5 px-1">
+            <div style={monoLabel}>NOTEBOOKS</div>
+            <button onClick={() => setNewNotebookOpen((v) => !v)} style={{ color: T.textMuted }} className="hover:text-white" title="New notebook">
+              <Plus size={12} />
+            </button>
+          </div>
+          {newNotebookOpen && (
+            <div style={{ border: `1px solid ${T.border}`, background: T.panelAlt }} className="rounded flex items-center gap-1.5 px-2 py-1.5 mb-1.5">
+              <input
+                autoFocus
+                value={newNotebookDraft}
+                onChange={(e) => setNewNotebookDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") addNotebook(newNotebookDraft); if (e.key === "Escape") { setNewNotebookOpen(false); setNewNotebookDraft(""); } }}
+                placeholder="Notebook name…"
+                style={{ ...inputBase, fontFamily: F.mono, fontSize: "11px" }}
+              />
+            </div>
+          )}
           <div className="flex flex-col gap-0.5">
             <button
               onClick={() => setNotebookFilter("All")}
               style={{
-                fontFamily: "'IBM Plex Mono', monospace",
+                fontFamily: F.mono,
                 fontSize: "12px",
-                color: notebookFilter === "All" ? COLORS.text : COLORS.textMuted,
-                background: notebookFilter === "All" ? COLORS.panelAlt : "transparent",
+                color: notebookFilter === "All" ? T.text : T.textMuted,
+                background: notebookFilter === "All" ? T.panelAlt : "transparent",
               }}
               className="w-full text-left px-2.5 py-1.5 rounded flex items-center gap-2 hover:bg-white/5"
             >
@@ -909,10 +1089,10 @@ export default function SnipNotes() {
                 key={nb}
                 onClick={() => setNotebookFilter(nb)}
                 style={{
-                  fontFamily: "'IBM Plex Mono', monospace",
+                  fontFamily: F.mono,
                   fontSize: "12px",
-                  color: notebookFilter === nb ? COLORS.text : COLORS.textMuted,
-                  background: notebookFilter === nb ? COLORS.panelAlt : "transparent",
+                  color: notebookFilter === nb ? T.text : T.textMuted,
+                  background: notebookFilter === nb ? T.panelAlt : "transparent",
                 }}
                 className="w-full text-left px-2.5 py-1.5 rounded flex items-center gap-2 hover:bg-white/5"
               >
@@ -930,11 +1110,11 @@ export default function SnipNotes() {
               <div
                 tabIndex={0}
                 onClick={() => fileInputRef.current?.click()}
-                style={{ border: `1.5px dashed ${COLORS.border}`, background: COLORS.panel }}
+                style={{ border: `1.5px dashed ${T.border}`, background: T.panel }}
                 className="rounded-lg flex items-center gap-3 px-4 py-3 mb-4 cursor-pointer hover:border-white/20 transition-colors"
               >
-                <Clipboard size={18} color={COLORS.amberDim} />
-                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "12px", color: COLORS.text }}>
+                <Clipboard size={18} color={T.amberDim} />
+                <div style={{ fontFamily: F.mono, fontSize: "12px", color: T.text }}>
                   ⌘V / CTRL+V to paste a snip, or click to upload
                 </div>
                 <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handleImageFile(e.target.files[0])} />
@@ -945,12 +1125,12 @@ export default function SnipNotes() {
               </div>
               <div className="flex flex-col gap-1.5">
                 {loaded && notes.length === 0 && (
-                  <div style={{ color: COLORS.textMuted, fontSize: "12px", fontFamily: "'IBM Plex Mono', monospace" }} className="p-6 text-center">
+                  <div style={{ color: T.textMuted, fontSize: "12px", fontFamily: F.mono }} className="p-6 text-center">
                     the binder is empty
                   </div>
                 )}
                 {loaded && notes.length > 0 && visibleNotes.length === 0 && (
-                  <div style={{ color: COLORS.textMuted, fontSize: "12px", fontFamily: "'IBM Plex Mono', monospace" }} className="p-6 text-center">
+                  <div style={{ color: T.textMuted, fontSize: "12px", fontFamily: F.mono }} className="p-6 text-center">
                     no pages match
                   </div>
                 )}
@@ -958,23 +1138,23 @@ export default function SnipNotes() {
                   <div
                     key={note.id}
                     onClick={() => openNote(note)}
-                    style={{ border: `1px solid ${COLORS.border}`, background: COLORS.panel }}
+                    style={{ border: `1px solid ${T.border}`, background: T.panel }}
                     className="rounded-lg px-4 py-3 cursor-pointer hover:border-white/20 transition-colors flex items-start justify-between gap-3 group"
                   >
                     <div className="min-w-0 flex items-start gap-2.5">
                       {(note.images?.length > 0 || note.hasImage) && (
-                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: COLORS.amber, marginTop: 6, flexShrink: 0 }} />
+                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: T.amber, marginTop: 6, flexShrink: 0 }} />
                       )}
                       <div className="min-w-0">
-                        <div style={{ fontSize: "14px", color: COLORS.text }} className="truncate">{note.title || "Untitled page"}</div>
-                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "10.5px", color: COLORS.textMuted }} className="mt-1">
+                        <div style={{ fontSize: "14px", color: T.text }} className="truncate">{note.title || "Untitled page"}</div>
+                        <div style={{ fontFamily: F.mono, fontSize: "10.5px", color: T.textMuted }} className="mt-1">
                           {note.notebook || DEFAULT_NOTEBOOK} · {new Date(note.createdAt).toLocaleDateString()} · {note.steps?.filter((s) => s.done).length || 0}/{note.steps?.length || 0} done
                         </div>
                       </div>
                     </div>
                     <button
                       onClick={(e) => deleteNote(note.id, e)}
-                      style={{ color: COLORS.textMuted }}
+                      style={{ color: T.textMuted }}
                       className="opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity shrink-0 mt-0.5"
                     >
                       <Trash2 size={13} />
@@ -986,36 +1166,36 @@ export default function SnipNotes() {
           )}
 
           {status === "ANALYZING" && (
-            <div style={{ border: `1px solid ${COLORS.border}`, background: COLORS.panel, minHeight: "300px" }} className="rounded-lg flex flex-col items-center justify-center gap-4 relative overflow-hidden">
+            <div style={{ border: `1px solid ${T.border}`, background: T.panel, minHeight: "300px" }} className="rounded-lg flex flex-col items-center justify-center gap-4 relative overflow-hidden">
               {preview && <img src={preview} alt="snip preview" style={{ maxHeight: 160, opacity: 0.35, borderRadius: 4 }} />}
-              <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "2px", background: COLORS.amber, boxShadow: `0 0 12px ${COLORS.amber}`, animation: "scan 1.6s linear infinite" }} />
+              <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "2px", background: T.amber, boxShadow: `0 0 12px ${T.amber}`, animation: "scan 1.6s linear infinite" }} />
               <style>{`@keyframes scan { 0% { transform: translateY(0); } 100% { transform: translateY(298px); } }`}</style>
-              <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "13px", color: COLORS.amber }}>ANALYZING SNIP…</div>
+              <div style={{ fontFamily: F.mono, fontSize: "13px", color: T.amber }}>ANALYZING SNIP…</div>
             </div>
           )}
 
           {status === "ERROR" && (
-            <div style={{ border: `1px solid ${COLORS.danger}`, background: COLORS.panel, minHeight: "200px" }} className="rounded-lg flex flex-col items-center justify-center gap-3 px-6 text-center">
-              <AlertTriangle size={28} color={COLORS.danger} />
-              <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "13px", color: COLORS.text }}>{errorMsg}</div>
-              <button onClick={reset} style={{ fontFamily: "'IBM Plex Mono', monospace", color: COLORS.amber, border: `1px solid ${COLORS.amberDim}` }} className="px-3 py-1.5 rounded text-xs flex items-center gap-1.5 hover:bg-white/5">
+            <div style={{ border: `1px solid ${T.danger}`, background: T.panel, minHeight: "200px" }} className="rounded-lg flex flex-col items-center justify-center gap-3 px-6 text-center">
+              <AlertTriangle size={28} color={T.danger} />
+              <div style={{ fontFamily: F.mono, fontSize: "13px", color: T.text }}>{errorMsg}</div>
+              <button onClick={reset} style={{ fontFamily: F.mono, color: T.amber, border: `1px solid ${T.amberDim}` }} className="px-3 py-1.5 rounded text-xs flex items-center gap-1.5 hover:bg-white/5">
                 <RotateCcw size={13} /> RESET
               </button>
             </div>
           )}
 
           {current && status === "PAGE" && (
-            <div style={{ border: `1px solid ${COLORS.border}`, background: COLORS.panel }} className="rounded-lg overflow-hidden max-w-3xl">
-              <div style={{ borderBottom: `1px solid ${COLORS.border}`, background: COLORS.panelAlt }} className="px-5 py-4 flex items-start justify-between gap-3">
+            <div style={{ border: `1px solid ${T.border}`, background: T.panel }} className="rounded-lg overflow-hidden max-w-3xl">
+              <div style={{ borderBottom: `1px solid ${T.border}`, background: T.panelAlt }} className="px-5 py-4 flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
-                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "10px", color: COLORS.amberDim, letterSpacing: "0.1em" }}>
+                  <div style={{ fontFamily: F.mono, fontSize: "10px", color: T.amberDim, letterSpacing: "0.1em" }}>
                     PAGE · {new Date(current.createdAt).toLocaleDateString()}
                   </div>
                   <input
                     value={current.title}
                     onChange={(e) => setCurrent({ ...current, title: e.target.value })}
                     onBlur={commitCurrent}
-                    style={{ ...inputBase, fontFamily: "'Archivo Black', sans-serif", fontSize: "20px", color: COLORS.text, marginTop: "4px" }}
+                    style={{ ...inputBase, fontFamily: F.display, fontSize: "20px", color: T.text, marginTop: "4px" }}
                     placeholder="Page title"
                   />
                 </div>
@@ -1023,13 +1203,13 @@ export default function SnipNotes() {
                   {!rightPanelOpen && (
                     <button
                       onClick={() => setRightPanelOpen(true)}
-                      style={{ fontFamily: "'IBM Plex Mono', monospace", color: COLORS.textMuted, border: `1px solid ${COLORS.border}` }}
+                      style={{ fontFamily: F.mono, color: T.textMuted, border: `1px solid ${T.border}` }}
                       className="px-2.5 py-1.5 rounded text-xs hover:text-white hover:border-white/30"
                     >
                       SHOW INFO
                     </button>
                   )}
-                  <button onClick={reset} style={{ fontFamily: "'IBM Plex Mono', monospace", color: COLORS.textMuted, border: `1px solid ${COLORS.border}` }} className="px-2.5 py-1.5 rounded text-xs flex items-center gap-1.5 hover:text-white hover:border-white/30">
+                  <button onClick={reset} style={{ fontFamily: F.mono, color: T.textMuted, border: `1px solid ${T.border}` }} className="px-2.5 py-1.5 rounded text-xs flex items-center gap-1.5 hover:text-white hover:border-white/30">
                     <Plus size={13} /> NEW SNIP
                   </button>
                 </div>
@@ -1044,13 +1224,13 @@ export default function SnipNotes() {
                   onBlur={commitCurrent}
                   placeholder="One or two lines on what this page is about…"
                   rows={1}
-                  style={{ ...inputBase, fontSize: "14px", color: COLORS.textMuted, lineHeight: 1.6, overflow: "hidden" }}
+                  style={{ ...inputBase, fontSize: "14px", color: T.textMuted, lineHeight: 1.6, overflow: "hidden" }}
                   className="mb-4"
                 />
 
                 <div className="flex flex-wrap items-center gap-1.5 mb-5">
                   {current.tags?.map((tag, i) => (
-                    <span key={i} style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "10px", color: COLORS.amber, border: `1px solid ${COLORS.amberDim}`, background: "rgba(236,237,239,0.06)" }} className="px-2 py-1 rounded flex items-center gap-1">
+                    <span key={i} style={{ fontFamily: F.mono, fontSize: "10px", color: T.amber, border: `1px solid ${T.amberDim}`, background: "rgba(236,237,239,0.06)" }} className="px-2 py-1 rounded flex items-center gap-1">
                       {tag}
                       <X size={10} className="cursor-pointer hover:text-white" onClick={() => removeTag(tag)} />
                     </span>
@@ -1060,20 +1240,20 @@ export default function SnipNotes() {
                     onChange={(e) => setTagDraft(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && tagDraft.trim()) { addTag(tagDraft); setTagDraft(""); } }}
                     placeholder="+ tag"
-                    style={{ ...inputBase, width: "70px", fontFamily: "'IBM Plex Mono', monospace", fontSize: "10px", color: COLORS.textMuted }}
+                    style={{ ...inputBase, width: "70px", fontFamily: F.mono, fontSize: "10px", color: T.textMuted }}
                   />
                 </div>
 
                 <div style={monoLabel} className="mb-2">STEPS</div>
                 <div className="flex flex-col gap-1 mb-2">
                   {current.steps.map((step, i) => (
-                    <div key={i} style={{ border: `1px solid ${COLORS.border}`, background: step.done ? "rgba(95,207,138,0.06)" : COLORS.panelAlt }} className="rounded px-3 py-2.5 flex items-start gap-3 group">
+                    <div key={i} style={{ border: `1px solid ${T.border}`, background: step.done ? "rgba(95,207,138,0.06)" : T.panelAlt }} className="rounded px-3 py-2.5 flex items-start gap-3 group">
                       <div
                         onClick={() => toggleStep(i)}
-                        style={{ width: 18, height: 18, borderRadius: 4, border: `1.5px solid ${step.done ? COLORS.green : COLORS.border}`, background: step.done ? COLORS.green : "transparent", flexShrink: 0, marginTop: 2, cursor: "pointer" }}
+                        style={{ width: 18, height: 18, borderRadius: 4, border: `1.5px solid ${step.done ? T.green : T.border}`, background: step.done ? T.green : "transparent", flexShrink: 0, marginTop: 2, cursor: "pointer" }}
                         className="flex items-center justify-center"
                       >
-                        {step.done && <Check size={12} color={COLORS.bg} strokeWidth={3} />}
+                        {step.done && <Check size={12} color={T.bg} strokeWidth={3} />}
                       </div>
                       <div className="flex-1 min-w-0">
                         <input
@@ -1081,7 +1261,7 @@ export default function SnipNotes() {
                           onChange={(e) => editStep(i, "title", e.target.value)}
                           onBlur={commitCurrent}
                           placeholder="Step title"
-                          style={{ ...inputBase, fontSize: "13.5px", color: step.done ? COLORS.textMuted : COLORS.text, textDecoration: step.done ? "line-through" : "none" }}
+                          style={{ ...inputBase, fontSize: "13.5px", color: step.done ? T.textMuted : T.text, textDecoration: step.done ? "line-through" : "none" }}
                         />
                         <textarea
                           value={step.detail}
@@ -1090,20 +1270,20 @@ export default function SnipNotes() {
                           onBlur={commitCurrent}
                           placeholder="Details (optional)"
                           rows={1}
-                          style={{ ...inputBase, fontSize: "12px", color: COLORS.textMuted, lineHeight: 1.5, marginTop: 2, overflow: "hidden" }}
+                          style={{ ...inputBase, fontSize: "12px", color: T.textMuted, lineHeight: 1.5, marginTop: 2, overflow: "hidden" }}
                         />
                       </div>
-                      <Trash2 size={13} onClick={() => removeStep(i)} style={{ color: COLORS.textMuted, flexShrink: 0, marginTop: 3, cursor: "pointer" }} className="opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity" />
+                      <Trash2 size={13} onClick={() => removeStep(i)} style={{ color: T.textMuted, flexShrink: 0, marginTop: 3, cursor: "pointer" }} className="opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity" />
                     </div>
                   ))}
-                  {current.steps.length === 0 && <div style={{ color: COLORS.textMuted, fontSize: "12px", fontFamily: "'IBM Plex Mono', monospace" }}>no steps yet</div>}
+                  {current.steps.length === 0 && <div style={{ color: T.textMuted, fontSize: "12px", fontFamily: F.mono }}>no steps yet</div>}
                 </div>
-                <button onClick={addStep} style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "11px", color: COLORS.textMuted, border: `1px dashed ${COLORS.border}` }} className="w-full py-1.5 rounded flex items-center justify-center gap-1.5 hover:text-white hover:border-white/30 mb-5">
+                <button onClick={addStep} style={{ fontFamily: F.mono, fontSize: "11px", color: T.textMuted, border: `1px dashed ${T.border}` }} className="w-full py-1.5 rounded flex items-center justify-center gap-1.5 hover:text-white hover:border-white/30 mb-5">
                   <Plus size={12} /> ADD STEP
                 </button>
 
                 <div style={monoLabel} className="mb-1.5">NOTES</div>
-                <div style={{ position: "relative", border: `1px solid ${COLORS.border}`, borderRadius: "6px", overflow: "hidden", background: COLORS.panelAlt }}>
+                <div style={{ position: "relative", border: `1px solid ${T.border}`, borderRadius: "6px", overflow: "hidden", background: T.panelAlt }}>
                   <div style={{ position: "absolute", left: 34, top: 0, bottom: 0, width: 1, background: "rgba(226,99,79,0.3)", pointerEvents: "none" }} />
                   <textarea
                     value={current.notes}
@@ -1119,7 +1299,7 @@ export default function SnipNotes() {
                       padding: "10px 14px 12px 44px",
                       minHeight: "120px",
                       overflow: "hidden",
-                      backgroundImage: `repeating-linear-gradient(to bottom, transparent, transparent 25px, ${COLORS.border} 25px, ${COLORS.border} 26px)`,
+                      backgroundImage: `repeating-linear-gradient(to bottom, transparent, transparent 25px, ${T.border} 25px, ${T.border} 26px)`,
                       backgroundAttachment: "local",
                     }}
                   />
@@ -1131,23 +1311,23 @@ export default function SnipNotes() {
 
         {/* RIGHT PANEL — page info + snips gallery */}
         {current && status === "PAGE" && rightPanelOpen && (
-          <div style={{ width: 300, borderLeft: `1px solid ${COLORS.border}`, background: COLORS.panel, flexShrink: 0 }} className="flex flex-col overflow-y-auto p-4">
+          <div style={{ width: 300, borderLeft: `1px solid ${T.border}`, background: T.panel, flexShrink: 0 }} className="flex flex-col overflow-y-auto p-4">
             <div className="flex items-center justify-between mb-4">
               <div style={monoLabel}>INFO</div>
-              <button onClick={() => setRightPanelOpen(false)} style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "10px", color: COLORS.textMuted, border: `1px solid ${COLORS.border}` }} className="px-2 py-1 rounded hover:text-white hover:border-white/30">
+              <button onClick={() => setRightPanelOpen(false)} style={{ fontFamily: F.mono, fontSize: "10px", color: T.textMuted, border: `1px solid ${T.border}` }} className="px-2 py-1 rounded hover:text-white hover:border-white/30">
                 Hide
               </button>
             </div>
 
             <div style={monoLabel} className="mb-1.5">NOTEBOOK</div>
             <div className="flex items-center gap-1.5 mb-4">
-              <Book size={12} color={COLORS.textMuted} />
+              <Book size={12} color={T.textMuted} />
               <input
                 list="notebook-options"
                 value={current.notebook || DEFAULT_NOTEBOOK}
                 onChange={(e) => setNotebook(e.target.value)}
                 onBlur={commitCurrent}
-                style={{ ...inputBase, fontFamily: "'IBM Plex Mono', monospace", fontSize: "12px", color: COLORS.text, border: `1px solid ${COLORS.border}`, borderRadius: 4, padding: "6px 8px" }}
+                style={{ ...inputBase, fontFamily: F.mono, fontSize: "12px", color: T.text, border: `1px solid ${T.border}`, borderRadius: 4, padding: "6px 8px" }}
               />
               <datalist id="notebook-options">
                 {notebooks.map((nb) => <option key={nb} value={nb} />)}
@@ -1155,13 +1335,13 @@ export default function SnipNotes() {
             </div>
 
             <div style={monoLabel} className="mb-1.5">STATUS</div>
-            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "11.5px", color: COLORS.textMuted }} className="mb-4">
+            <div style={{ fontFamily: F.mono, fontSize: "11.5px", color: T.textMuted }} className="mb-4">
               {current.steps.filter((s) => s.done).length}/{current.steps.length} steps done · {currentImages.length} snip{currentImages.length === 1 ? "" : "s"}
             </div>
 
             <div className="flex items-center justify-between mb-2">
               <div style={monoLabel}>SNIPS</div>
-              <button onClick={() => addImageInputRef.current?.click()} style={{ color: COLORS.textMuted }} className="hover:text-white" title="Add another snip">
+              <button onClick={() => addImageInputRef.current?.click()} style={{ color: T.textMuted }} className="hover:text-white" title="Add another snip">
                 <Plus size={14} />
               </button>
               <input
@@ -1181,14 +1361,14 @@ export default function SnipNotes() {
                         src={img.thumb}
                         alt={img.label}
                         onClick={() => openLightbox(img.id)}
-                        style={{ width: "100%", aspectRatio: "1", objectFit: "cover", borderRadius: 4, border: `1px solid ${COLORS.border}`, cursor: "pointer" }}
+                        style={{ width: "100%", aspectRatio: "1", objectFit: "cover", borderRadius: 4, border: `1px solid ${T.border}`, cursor: "pointer" }}
                       />
                     ) : (
-                      <div style={{ width: "100%", aspectRatio: "1", borderRadius: 4, border: `1px solid ${COLORS.border}`, background: COLORS.panelAlt }} />
+                      <div style={{ width: "100%", aspectRatio: "1", borderRadius: 4, border: `1px solid ${T.border}`, background: T.panelAlt }} />
                     )}
                     <button
                       onClick={(e) => removeImage(img.id, e)}
-                      style={{ position: "absolute", top: -5, right: -5, width: 16, height: 16, borderRadius: "50%", background: COLORS.panel, border: `1px solid ${COLORS.border}`, color: COLORS.textMuted }}
+                      style={{ position: "absolute", top: -5, right: -5, width: 16, height: 16, borderRadius: "50%", background: T.panel, border: `1px solid ${T.border}`, color: T.textMuted }}
                       className="flex items-center justify-center opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity"
                     >
                       <X size={9} />
@@ -1198,13 +1378,13 @@ export default function SnipNotes() {
                     value={img.label}
                     onChange={(e) => editImageLabel(img.id, e.target.value)}
                     onBlur={commitCurrent}
-                    style={{ ...inputBase, textAlign: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: "9px", color: COLORS.textMuted }}
+                    style={{ ...inputBase, textAlign: "center", fontFamily: F.mono, fontSize: "9px", color: T.textMuted }}
                   />
                 </div>
               ))}
               <button
                 onClick={() => addImageInputRef.current?.click()}
-                style={{ width: "100%", aspectRatio: "1", borderRadius: 4, border: `1px dashed ${COLORS.border}`, color: COLORS.textMuted }}
+                style={{ width: "100%", aspectRatio: "1", borderRadius: 4, border: `1px dashed ${T.border}`, color: T.textMuted }}
                 className="flex items-center justify-center hover:text-white hover:border-white/30 transition-colors"
                 title="Add another snip"
               >
@@ -1222,7 +1402,7 @@ export default function SnipNotes() {
         >
           <button
             onClick={() => { if (annotating) { setAnnotating(false); setTextInputPos(null); } else closeLightbox(); }}
-            style={{ position: "absolute", top: 20, right: 20, color: COLORS.text, border: `1px solid ${COLORS.border}`, background: COLORS.panel }}
+            style={{ position: "absolute", top: 20, right: 20, color: T.text, border: `1px solid ${T.border}`, background: T.panel }}
             className="p-2 rounded hover:border-white/40"
           >
             <X size={16} />
@@ -1231,7 +1411,7 @@ export default function SnipNotes() {
           {!annotating && lightboxSrc && (
             <button
               onClick={(e) => { e.stopPropagation(); startAnnotating(); }}
-              style={{ position: "absolute", top: 20, right: 68, fontFamily: "'IBM Plex Mono', monospace", fontSize: "12px", color: COLORS.amber, border: `1px solid ${COLORS.amberDim}`, background: COLORS.panel }}
+              style={{ position: "absolute", top: 20, right: 68, fontFamily: F.mono, fontSize: "12px", color: T.amber, border: `1px solid ${T.amberDim}`, background: T.panel }}
               className="px-3 py-2 rounded flex items-center gap-1.5 hover:bg-white/5"
             >
               <Pencil size={13} /> ANNOTATE
@@ -1239,7 +1419,7 @@ export default function SnipNotes() {
           )}
 
           {lightboxLoading && !lightboxSrc && (
-            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "12px", color: COLORS.textMuted }}>loading full snip…</div>
+            <div style={{ fontFamily: F.mono, fontSize: "12px", color: T.textMuted }}>loading full snip…</div>
           )}
 
           {lightboxSrc && !annotating && (
@@ -1247,14 +1427,14 @@ export default function SnipNotes() {
               src={lightboxSrc}
               alt="full snip"
               onClick={(e) => e.stopPropagation()}
-              style={{ maxWidth: "90vw", maxHeight: "90vh", borderRadius: 6, border: `1px solid ${COLORS.border}`, boxShadow: "0 8px 32px rgba(0,0,0,0.5)", cursor: "default" }}
+              style={{ maxWidth: "90vw", maxHeight: "90vh", borderRadius: 6, border: `1px solid ${T.border}`, boxShadow: "0 8px 32px rgba(0,0,0,0.5)", cursor: "default" }}
             />
           )}
 
           {annotating && (
             <div onClick={(e) => e.stopPropagation()} className="flex flex-col items-center gap-3">
               <div ref={canvasWrapRef} style={{ position: "relative", maxWidth: "85vw", maxHeight: "68vh" }}>
-                <canvas ref={baseCanvasRef} style={{ maxWidth: "85vw", maxHeight: "68vh", display: "block", borderRadius: 6, border: `1px solid ${COLORS.border}` }} />
+                <canvas ref={baseCanvasRef} style={{ maxWidth: "85vw", maxHeight: "68vh", display: "block", borderRadius: 6, border: `1px solid ${T.border}` }} />
                 <canvas
                   ref={overlayCanvasRef}
                   onPointerDown={handleAnnotatePointerDown}
@@ -1277,7 +1457,7 @@ export default function SnipNotes() {
                       background: "rgba(18,21,26,0.85)",
                       border: `1px solid ${annotateColor}`,
                       color: annotateColor,
-                      fontFamily: "'IBM Plex Mono', monospace",
+                      fontFamily: F.mono,
                       fontWeight: 700,
                       fontSize: "16px",
                       padding: "2px 6px",
@@ -1287,7 +1467,7 @@ export default function SnipNotes() {
                   />
                 )}
               </div>
-              <div style={{ border: `1px solid ${COLORS.border}`, background: COLORS.panel }} className="rounded-lg flex items-center gap-1.5 px-2 py-2 flex-wrap justify-center">
+              <div style={{ border: `1px solid ${T.border}`, background: T.panel }} className="rounded-lg flex items-center gap-1.5 px-2 py-2 flex-wrap justify-center">
                 {[
                   { key: "pen", icon: Pencil, label: "Pen" },
                   { key: "rect", icon: Square, label: "Box" },
@@ -1298,31 +1478,137 @@ export default function SnipNotes() {
                     key={key}
                     onClick={() => setAnnotateTool(key)}
                     title={label}
-                    style={{ color: annotateTool === key ? COLORS.bg : COLORS.textMuted, background: annotateTool === key ? COLORS.amber : "transparent", border: `1px solid ${annotateTool === key ? COLORS.amber : COLORS.border}` }}
+                    style={{ color: annotateTool === key ? T.bg : T.textMuted, background: annotateTool === key ? T.amber : "transparent", border: `1px solid ${annotateTool === key ? T.amber : T.border}` }}
                     className="p-2 rounded"
                   >
                     <Icon size={14} />
                   </button>
                 ))}
-                <div style={{ width: 1, alignSelf: "stretch", background: COLORS.border }} className="mx-1" />
+                <div style={{ width: 1, alignSelf: "stretch", background: T.border }} className="mx-1" />
                 {ANNOTATE_COLORS.map((c) => (
                   <button
                     key={c}
                     onClick={() => setAnnotateColor(c)}
                     title="Color"
-                    style={{ width: 20, height: 20, borderRadius: "50%", background: c, border: annotateColor === c ? `2px solid ${COLORS.text}` : `1px solid ${COLORS.border}` }}
+                    style={{ width: 20, height: 20, borderRadius: "50%", background: c, border: annotateColor === c ? `2px solid ${T.text}` : `1px solid ${T.border}` }}
                   />
                 ))}
-                <div style={{ width: 1, alignSelf: "stretch", background: COLORS.border }} className="mx-1" />
-                <button onClick={clearAnnotations} title="Clear" style={{ color: COLORS.textMuted, border: `1px solid ${COLORS.border}` }} className="p-2 rounded hover:text-white hover:border-white/30">
+                <div style={{ width: 1, alignSelf: "stretch", background: T.border }} className="mx-1" />
+                <button onClick={clearAnnotations} title="Clear" style={{ color: T.textMuted, border: `1px solid ${T.border}` }} className="p-2 rounded hover:text-white hover:border-white/30">
                   <Eraser size={14} />
                 </button>
-                <button onClick={saveAnnotatedImage} style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "11px", color: COLORS.bg, background: COLORS.green }} className="px-3 py-2 rounded flex items-center gap-1.5 ml-1">
+                <button onClick={saveAnnotatedImage} style={{ fontFamily: F.mono, fontSize: "11px", color: T.bg, background: T.green }} className="px-3 py-2 rounded flex items-center gap-1.5 ml-1">
                   <Save size={13} /> SAVE AS NEW SNIP
                 </button>
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {settingsOpen && (
+        <div
+          onClick={() => setSettingsOpen(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(10,12,14,0.75)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: T.panel, border: `1px solid ${T.border}`, width: 420, maxWidth: "90vw", maxHeight: "85vh" }}
+            className="rounded-lg overflow-y-auto"
+          >
+            <div style={{ borderBottom: `1px solid ${T.border}` }} className="px-5 py-4 flex items-center justify-between">
+              <div style={{ fontFamily: F.display, fontSize: "16px" }}>Settings</div>
+              <button onClick={() => setSettingsOpen(false)} style={{ color: T.textMuted }} className="hover:text-white">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="px-5 py-4">
+              <div style={monoLabel} className="mb-2 flex items-center gap-1.5">
+                <Palette size={11} /> THEME
+              </div>
+              <div className="grid grid-cols-3 gap-2 mb-5">
+                {Object.entries(THEMES).map(([key, theme]) => (
+                  <button
+                    key={key}
+                    onClick={() => saveSettings({ themeKey: key })}
+                    style={{
+                      border: themeKey === key ? `2px solid ${T.amber}` : `1px solid ${T.border}`,
+                      background: theme.bg,
+                    }}
+                    className="rounded-lg p-2.5 flex flex-col items-start gap-2"
+                  >
+                    <div className="flex gap-1">
+                      <span style={{ width: 12, height: 12, borderRadius: "50%", background: theme.amber }} />
+                      <span style={{ width: 12, height: 12, borderRadius: "50%", background: theme.green }} />
+                      <span style={{ width: 12, height: 12, borderRadius: "50%", background: theme.danger }} />
+                    </div>
+                    <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "10px", color: theme.text }}>{theme.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div style={monoLabel} className="mb-2 flex items-center gap-1.5">
+                <Type size={11} /> FONT STYLE
+              </div>
+              <div className="flex gap-2 mb-5">
+                {Object.entries(FONT_STACKS).map(([key, stack]) => (
+                  <button
+                    key={key}
+                    onClick={() => saveSettings({ fontKey: key })}
+                    style={{
+                      fontFamily: stack.sans,
+                      fontSize: "12px",
+                      color: fontKey === key ? T.bg : T.text,
+                      background: fontKey === key ? T.amber : T.panelAlt,
+                      border: `1px solid ${fontKey === key ? T.amber : T.border}`,
+                      flex: 1,
+                    }}
+                    className="rounded px-3 py-2"
+                  >
+                    {stack.label}
+                  </button>
+                ))}
+              </div>
+
+              <div style={monoLabel} className="mb-2">FONT SIZE</div>
+              <div className="flex gap-2 mb-5">
+                {[{ key: "sm", label: "Small" }, { key: "md", label: "Medium" }, { key: "lg", label: "Large" }].map(({ key, label }) => (
+                  <button
+                    key={key}
+                    onClick={() => saveSettings({ fontScale: key })}
+                    style={{
+                      fontFamily: F.mono,
+                      fontSize: "12px",
+                      color: fontScale === key ? T.bg : T.text,
+                      background: fontScale === key ? T.amber : T.panelAlt,
+                      border: `1px solid ${fontScale === key ? T.amber : T.border}`,
+                      flex: 1,
+                    }}
+                    className="rounded px-3 py-2"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div style={monoLabel} className="mb-2 flex items-center gap-1.5">
+                <Download size={11} /> EXPORT
+              </div>
+              <button
+                onClick={exportAllData}
+                disabled={exportStatus === "working"}
+                style={{ fontFamily: F.mono, fontSize: "12px", color: T.bg, background: T.green }}
+                className="w-full rounded px-3 py-2.5 flex items-center justify-center gap-2"
+              >
+                <Download size={13} />
+                {exportStatus === "working" ? "EXPORTING…" : exportStatus === "done" ? "DOWNLOADED" : "EXPORT ALL DATA (.JSON)"}
+              </button>
+              <div style={{ fontFamily: F.mono, fontSize: "10px", color: T.textMuted }} className="mt-2">
+                Downloads every page, note, and snip image as one JSON file — a full local backup.
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
